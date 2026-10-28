@@ -1,0 +1,51 @@
+server:
+  port: 8080
+
+spring:
+  application:
+    name: rideflow
+
+  kafka:
+    # Any one broker is enough to discover the rest ("bootstrap"); list several so startup survives a dead one.
+    bootstrap-servers: localhost:9092,localhost:9094,localhost:9096
+
+    producer:
+      # acks=all: the leader replies only after ALL in-sync replicas have the record (with min.insync.replicas=2).
+      acks: all
+      compression-type: lz4
+      properties:
+        enable.idempotence: true            # retries can never create duplicates or reorder (per partition)
+        linger.ms: 10                       # wait up to 10ms to batch records together => throughput
+        batch.size: 32768
+        delivery.timeout.ms: 45000          # give up (and fail the send future) after 45s of trying (must be >= linger + request.timeout)
+
+    consumer:
+      auto-offset-reset: earliest           # a NEW group starts from the beginning of the topic
+      enable-auto-commit: false             # the Spring container commits offsets only after your code succeeds
+      properties:
+        isolation.level: read_committed     # don't see messages from aborted / in-flight transactions
+        max.poll.records: 100
+        partition.assignment.strategy: org.apache.kafka.clients.consumer.CooperativeStickyAssignor  # incremental rebalances
+
+    streams:
+      application-id: rideflow-streams      # doubles as the consumer group id of the Streams app
+      replication-factor: 3                 # for Streams' internal changelog / repartition topics
+      properties:
+        processing.guarantee: exactly_once_v2
+        commit.interval.ms: 1000
+        statestore.cache.max.bytes: 0       # emit every update immediately (nicer for a demo)
+        default.deserialization.exception.handler: org.apache.kafka.streams.errors.LogAndContinueExceptionHandler
+
+rideflow:
+  simulator:
+    enabled: true                           # seeds 45 drivers (15 per zone) and streams their GPS locations every second
+
+logging:
+  pattern:
+    console: "%d{HH:mm:ss.SSS} %-5level [%-22.22t] %msg%n"
+  level:
+    root: WARN
+    com.rideflow: INFO
+    org.springframework.boot.SpringApplication: INFO
+    # Shows "partitions assigned / revoked" so you can watch rebalancing:
+    org.springframework.kafka.listener.KafkaMessageListenerContainer: INFO
